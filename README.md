@@ -3,8 +3,8 @@
 A modern web application for managing citizen complaints with AI-powered classification and routing. Built with Next.js, FastAPI, and MongoDB.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Python](https://img.shields.io/badge/python-3.9-blue.svg)
-![Node](https://img.shields.io/badge/node-18-green.svg)
+![Python](https://img.shields.io/badge/python-3.12-blue.svg)
+![Node](https://img.shields.io/badge/node-22-green.svg)
 
 ## Features
 
