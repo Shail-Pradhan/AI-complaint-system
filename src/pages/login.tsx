@@ -15,12 +15,15 @@ import {
   InputRightElement,
   IconButton,
   FormErrorMessage,
+  Image,
+  Center,
 } from '@chakra-ui/react'
 import { useForm } from 'react-hook-form'
 import { useAuth } from '../contexts/AuthContext'
 import Link from 'next/link'
 import Layout from '../components/Layout'
 import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons'
+import skmgovLogo from '../assets/skmgov.png'
 
 interface LoginForm {
   email: string
@@ -61,6 +64,9 @@ export default function Login() {
         <Stack spacing="8">
           <Stack spacing="6">
             <Stack spacing={{ base: '2', md: '3' }} textAlign="center">
+              <Center>
+                <Image src={skmgovLogo.src} alt="SKM Government Logo" height="80px" mb={4} />
+              </Center>
               <Heading size={{ base: 'xs', md: 'sm' }}>
                 Log in to your account
               </Heading>

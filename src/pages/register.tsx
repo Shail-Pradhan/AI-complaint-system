@@ -15,12 +15,15 @@ import {
   InputGroup,
   InputRightElement,
   IconButton,
+  Image,
+  Center,
 } from '@chakra-ui/react'
 import { useForm } from 'react-hook-form'
 import { useAuth } from '../contexts/AuthContext'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons'
+import skmgovLogo from '../assets/skmgov.png'
 
 // Dynamically import Layout with no SSR to improve initial page load
 const Layout = dynamic(() => import('../components/Layout'), { ssr: false })
@@ -120,6 +123,9 @@ const Register = () => {
         <Stack spacing="8">
           <Stack spacing="6">
             <Stack spacing={{ base: '2', md: '3' }} textAlign="center">
+              <Center>
+                <Image src={skmgovLogo.src} alt="SKM Government Logo" height="80px" mb={4} />
+              </Center>
               <Heading size={{ base: 'xs', md: 'sm' }}>Create an account</Heading>
               <Text color="gray.600">
                 Already have an account?{' '}

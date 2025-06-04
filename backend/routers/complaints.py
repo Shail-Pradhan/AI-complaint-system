@@ -9,6 +9,7 @@ import cloudinary
 import cloudinary.uploader
 import os
 import logging
+import asyncio
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -22,6 +23,51 @@ cloudinary.config(
 )
 
 router = APIRouter()
+
+async def analyze_complaint(request: Request, complaint: dict) -> dict:
+    """Analyze complaint using AI and return predictions"""
+    logger.info(f"Starting analyze_complaint for complaint ID: {complaint['_id']}")
+    
+    try:
+        # Perform text analysis
+        logger.info("Calling analyze_complaint_text...")
+        department_id, priority_score, category, analysis_text = await analyze_complaint_text(complaint)
+        logger.info(f"Text analysis results: department={department_id}, priority={priority_score}, category={category}")
+        
+        # Split analysis text to separate analysis and officer recommendation
+        parts = analysis_text.split("\n\nOfficer Assignment: ")
+        analysis = parts[0]
+        officer_recommendation = parts[1] if len(parts) > 1 else "No specific officer recommendation provided."
+        logger.info("Successfully split analysis and recommendation")
+        
+        # Create analysis record
+        analysis_record = {
+            "_id": str(ObjectId()),
+            "complaint_id": complaint["_id"],
+            "department_id": department_id,
+            "category_prediction": category,
+            "priority_score": priority_score,
+            "analysis_text": analysis,
+            "officer_recommendation": officer_recommendation,
+            "version": "llama-3.3-70b-versatile",
+            "created_at": datetime.utcnow()
+        }
+        
+        logger.info(f"Created analysis record: {analysis_record}")
+        
+        # Store analysis in database
+        try:
+            await request.app.mongodb["ai_analyses"].insert_one(analysis_record)
+            logger.info("Successfully stored analysis in database")
+        except Exception as db_error:
+            logger.error(f"Error storing analysis in database: {str(db_error)}")
+            # Continue even if storage fails - we still want to return the analysis
+        
+        return analysis_record
+        
+    except Exception as e:
+        logger.error(f"Error in analyze_complaint: {str(e)}")
+        raise
 
 @router.post("/", response_model=Complaint)
 async def create_complaint(
@@ -39,16 +85,30 @@ async def create_complaint(
         # Log the complaint data for debugging
         logger.info(f"Creating complaint with data: {complaint_dict}")
         
-        # Insert complaint
+        # Insert complaint first
         await request.app.mongodb["complaints"].insert_one(complaint_dict)
         
-        logger.info("Starting AI analysis for complaint: %s", complaint_dict["_id"])
+        # Trigger AI analysis with retries
+        max_retries = 3
+        retry_delay = 2  # seconds
+        analysis = None
+        last_error = None
         
-        # Trigger AI analysis
-        try:
-            analysis = await analyze_complaint(request, complaint_dict)
-            logger.info("AI Analysis completed: %s", analysis)
-            
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Starting AI analysis attempt {attempt + 1} for complaint: {complaint_dict['_id']}")
+                analysis = await analyze_complaint(request, complaint_dict)
+                if analysis:
+                    logger.info(f"AI Analysis completed on attempt {attempt + 1}: {analysis}")
+                    break
+            except Exception as e:
+                last_error = e
+                logger.error(f"Error in AI analysis attempt {attempt + 1}: {str(e)}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
+                continue
+        
+        if analysis:
             # Get department ID from analysis
             department_id = analysis.get("department_id")
             
@@ -56,18 +116,18 @@ async def create_complaint(
             officer = await request.app.mongodb["users"].find_one({
                 "role": "officer",
                 "department_id": department_id,
-                # Add query to find officer with least active complaints
                 "$expr": {
                     "$lt": [
                         {"$size": {"$ifNull": ["$active_complaints", []]}},
                         5  # Maximum of 5 active complaints per officer
                     ]
                 }
-            }, sort=[("active_complaints", 1)])  # Sort by number of active complaints
+            }, sort=[("active_complaints", 1)])
             
             update_data = {
                 "department_id": department_id,
-                "last_updated": datetime.utcnow()
+                "last_updated": datetime.utcnow(),
+                "ai_analysis": analysis
             }
             
             if officer:
@@ -81,30 +141,51 @@ async def create_complaint(
                     }
                 )
             
-            # Update complaint with department and officer assignment
+            # Update complaint with department, officer assignment, and AI analysis
             await request.app.mongodb["complaints"].update_one(
                 {"_id": complaint_dict["_id"]},
                 {"$set": update_data}
             )
+        else:
+            # If all retries failed, update with error state
+            error_analysis = {
+                "_id": str(ObjectId()),
+                "complaint_id": complaint_dict["_id"],
+                "department_id": "ERROR",
+                "category_prediction": "error",
+                "priority_score": 0,
+                "analysis_text": f"Error during AI analysis after {max_retries} attempts. Please try again later.",
+                "officer_recommendation": "Unable to generate recommendation due to error.",
+                "version": "error",
+                "created_at": datetime.utcnow()
+            }
             
-            # Get updated complaint to return
-            updated_complaint = await request.app.mongodb["complaints"].find_one(
-                {"_id": complaint_dict["_id"]}
+            await request.app.mongodb["complaints"].update_one(
+                {"_id": complaint_dict["_id"]},
+                {"$set": {
+                    "ai_analysis": error_analysis,
+                    "last_updated": datetime.utcnow()
+                }}
             )
-            if not updated_complaint:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Complaint not found after creation"
-                )
-            return updated_complaint
             
-        except Exception as e:
-            logger.error("Error in AI analysis or officer assignment: %s", str(e))
-            # Return the complaint even if AI analysis fails
-            return complaint_dict
+            if last_error:
+                logger.error(f"All AI analysis attempts failed for complaint {complaint_dict['_id']}: {str(last_error)}")
+        
+        # Get updated complaint to return
+        updated_complaint = await request.app.mongodb["complaints"].find_one(
+            {"_id": complaint_dict["_id"]}
+        )
+        if not updated_complaint:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Complaint not found after creation"
+            )
+        
+        logger.info(f"Returning updated complaint with analysis: {updated_complaint}")
+        return updated_complaint
             
     except Exception as e:
-        logger.error("Error creating complaint: %s", str(e))
+        logger.error(f"Error creating complaint: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error creating complaint: {str(e)}"
@@ -211,7 +292,7 @@ async def upload_complaint_image(
     if not complaint:
         raise HTTPException(status_code=404, detail="Complaint not found")
         
-    if complaint["citizen_id"] != current_user.id:
+    if complaint["citizen_id"] != current_user.email:
         raise HTTPException(status_code=403, detail="Not authorized to update this complaint")
     
     # Upload to Cloudinary
@@ -233,38 +314,4 @@ async def upload_complaint_image(
         return {"image_url": upload_result["secure_url"]}
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error uploading image: {str(e)}")
-
-async def analyze_complaint(request: Request, complaint: dict) -> dict:
-    """Analyze complaint using AI and return predictions"""
-    # Perform text analysis
-    department_id, priority_score, category, analysis_text = await analyze_complaint_text(complaint)
-    
-    # Split analysis text to separate analysis and officer recommendation
-    parts = analysis_text.split("\n\nOfficer Assignment Recommendation: ")
-    analysis = parts[0]
-    officer_recommendation = parts[1] if len(parts) > 1 else "No specific officer recommendation provided."
-    
-    # Perform image analysis if image is provided
-    image_analysis = None
-    if complaint.get("image_url"):
-        image_analysis = await analyze_complaint_image(complaint["image_url"])
-    
-    # Create analysis record
-    analysis = {
-        "_id": str(ObjectId()),
-        "complaint_id": complaint["_id"],
-        "department_id": department_id,
-        "category_prediction": category,
-        "priority_score": priority_score,
-        "analysis_text": analysis,
-        "officer_recommendation": officer_recommendation,
-        "image_analysis": image_analysis,
-        "model_version": "llama-3.3-70b-versatile",
-        "created_at": datetime.utcnow()
-    }
-    
-    # Store analysis in database
-    await request.app.mongodb["ai_analyses"].insert_one(analysis)
-    
-    return analysis 
+        raise HTTPException(status_code=500, detail=f"Error uploading image: {str(e)}") 

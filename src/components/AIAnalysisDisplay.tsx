@@ -16,9 +16,9 @@ import { motion } from 'framer-motion'
 import { FaRobot, FaCheckCircle } from 'react-icons/fa'
 import { BsLightningChargeFill } from 'react-icons/bs'
 
-const MotionBox = motion(Box)
-const MotionText = motion(Text)
-const MotionFlex = motion(Flex)
+const MotionBox = motion.create(Box)
+const MotionText = motion.create(Text)
+const MotionFlex = motion.create(Flex)
 
 interface AIAnalysisDisplayProps {
   analysis: {
@@ -27,7 +27,7 @@ interface AIAnalysisDisplayProps {
     priority_score: number
     analysis_text: string
     officer_recommendation: string
-    model_version: string
+    version: string
   }
 }
 
@@ -99,7 +99,7 @@ const AIAnalysisDisplay: React.FC<AIAnalysisDisplayProps> = ({ analysis }) => {
               </Heading>
             </Flex>
             <Badge colorScheme="blue" fontSize="sm" p={2}>
-              {analysis.model_version}
+              {analysis.version}
             </Badge>
           </MotionFlex>
 

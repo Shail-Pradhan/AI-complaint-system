@@ -14,20 +14,21 @@ import {
   Select,
   Image,
   VStack,
+  useColorModeValue,
   Modal,
   ModalOverlay,
   ModalContent,
   ModalBody,
   ModalCloseButton,
   useDisclosure,
-  useColorModeValue,
+  Spinner,
 } from '@chakra-ui/react'
 import { useForm } from 'react-hook-form'
 import { useAuth } from '../../contexts/AuthContext'
 import Layout from '../../components/Layout'
 import { useRouter } from 'next/router'
 import axios from 'axios'
-import AIAnalysisAnimation from '../../components/AIAnalysisAnimation'
+import AIAnalysisDisplay from '../../components/AIAnalysisDisplay'
 
 interface ComplaintForm {
   title: string
@@ -39,28 +40,45 @@ interface ComplaintForm {
 export default function NewComplaint() {
   const [isLoading, setIsLoading] = useState(false)
   const [selectedImage, setSelectedImage] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
-  const [submittedComplaintId, setSubmittedComplaintId] = useState<string | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [complaintAnalysis, setComplaintAnalysis] = useState<any>(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
   const { isOpen, onOpen, onClose } = useDisclosure()
+  const { register, handleSubmit, formState: { errors } } = useForm<ComplaintForm>()
   const { user } = useAuth()
-  const toast = useToast()
   const router = useRouter()
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<ComplaintForm>()
+  const toast = useToast()
 
   const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (file) {
+    if (event.target.files && event.target.files[0]) {
+      const file = event.target.files[0]
       setSelectedImage(file)
-      const reader = new FileReader()
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string)
-      }
-      reader.readAsDataURL(file)
+      setPreviewUrl(URL.createObjectURL(file))
     }
+  }
+
+  const removeImage = () => {
+    setSelectedImage(null)
+    setPreviewUrl(null)
+  }
+
+  const pollForAnalysis = async (complaintId: string) => {
+    const maxAttempts = 10
+    const delayMs = 2000 // 2 seconds between attempts
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      console.log(`Polling attempt ${attempt + 1} for analysis...`)
+      const response = await axios.get(`/api/complaints/${complaintId}`)
+      
+      if (response.data.ai_analysis) {
+        console.log('Analysis found:', response.data.ai_analysis)
+        return response.data.ai_analysis
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, delayMs))
+    }
+    
+    throw new Error('Analysis timed out after maximum attempts')
   }
 
   const onSubmit = async (data: ComplaintForm) => {
@@ -71,15 +89,19 @@ export default function NewComplaint() {
         citizen_id: user?.email || 'anonymous'
       }
 
+      console.log('Submitting complaint data:', complaintData)
       const complaintResponse = await axios.post('/api/complaints', complaintData)
-      setSubmittedComplaintId(complaintResponse.data._id)
-      onOpen() // Open the modal with AI analysis animation
+      console.log('Complaint creation response:', complaintResponse.data)
+      
+      const complaintId = complaintResponse.data._id
 
-      if (selectedImage && complaintResponse.data._id) {
+      // Handle image upload if present
+      if (selectedImage) {
+        console.log('Uploading image for complaint:', complaintId)
         const formData = new FormData()
         formData.append('file', selectedImage)
-        await axios.post(
-          `/api/complaints/${complaintResponse.data._id}/image`,
+        const imageResponse = await axios.post(
+          `/api/complaints/${complaintId}/image`,
           formData,
           {
             headers: {
@@ -87,14 +109,37 @@ export default function NewComplaint() {
             },
           }
         )
+        console.log('Image upload response:', imageResponse.data)
       }
 
-      // Don't show success toast or redirect until animation is complete
+      // Show analysis modal and start polling
+      onOpen()
+      setIsAnalyzing(true)
+      
+      try {
+        const analysis = await pollForAnalysis(complaintId)
+        setComplaintAnalysis(analysis)
+      } catch (error) {
+        console.error('Error getting analysis:', error)
+        toast({
+          title: 'Analysis Error',
+          description: 'Could not retrieve the AI analysis. You can view it later in your complaints.',
+          status: 'warning',
+          duration: 5000,
+          isClosable: true,
+        })
+      } finally {
+        setIsAnalyzing(false)
+      }
+
     } catch (error: any) {
-      console.error('Error submitting complaint:', error)
+      console.error('Full error object:', error)
+      console.error('Error response data:', error.response?.data)
+      console.error('Error stack:', error.stack)
+      
       toast({
         title: 'Error submitting complaint',
-        description: error.response?.data?.detail || 'Please try again later.',
+        description: error.response?.data?.detail || error.message || 'Please try again later.',
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -104,208 +149,105 @@ export default function NewComplaint() {
     }
   }
 
-  const handleAnimationComplete = () => {
-    toast({
-      title: 'Complaint submitted successfully',
-      status: 'success',
-      duration: 5000,
-      isClosable: true,
-    })
+  const handleClose = () => {
+    onClose()
+    router.push('/complaints')
   }
 
   return (
     <Layout>
       <Box
-        position="relative"
-        _before={{
-          content: '""',
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          bgGradient: "linear(to-br, blue.500, purple.600, green.400)",
-          opacity: 0.1,
-          borderRadius: "2xl",
-        }}
+        minH="100vh"
+        bg={useColorModeValue('gray.50', 'gray.900')}
+        pt={{ base: 4, md: 8 }}
+        pb={8}
       >
-        <Container maxW="container.md" py={8} position="relative">
+        <Container maxW="container.md">
           <Box
-            bg="white"
-            borderRadius="2xl"
+            bg={useColorModeValue('white', 'gray.800')}
             p={8}
-            boxShadow="xl"
-            backdropFilter="blur(10px)"
+            rounded="xl"
+            shadow="base"
           >
             <VStack spacing={8} align="stretch">
-              <Heading
-                size="lg"
-                bgGradient="linear(to-r, blue.400, purple.500)"
-                bgClip="text"
-                letterSpacing="tight"
-              >
+              <Heading size="lg" mb={6}>
                 Submit a New Complaint
               </Heading>
 
               <form onSubmit={handleSubmit(onSubmit)}>
                 <Stack spacing={6}>
-                  <FormControl isInvalid={!!errors.title}>
-                    <FormLabel
-                      fontWeight="medium"
-                      color="gray.700"
-                    >
-                      Title
-                    </FormLabel>
+                  <FormControl isRequired>
+                    <FormLabel>Title</FormLabel>
                     <Input
-                      {...register('title', {
-                        required: 'Title is required',
-                        minLength: {
-                          value: 5,
-                          message: 'Title must be at least 5 characters',
-                        },
-                      })}
-                      bg="white"
-                      borderColor="gray.200"
-                      _hover={{ borderColor: 'purple.400' }}
-                      _focus={{ borderColor: 'purple.500', boxShadow: '0 0 0 1px purple.500' }}
-                      fontSize="md"
-                      h="12"
+                      {...register('title')}
+                      placeholder="Brief title of your complaint"
                     />
-                    {errors.title && (
-                      <Text color="red.500" fontSize="sm" mt={1}>
-                        {errors.title.message}
-                      </Text>
-                    )}
                   </FormControl>
 
-                  <FormControl isInvalid={!!errors.category}>
-                    <FormLabel
-                      fontWeight="medium"
-                      color="gray.700"
-                    >
-                      Category
-                    </FormLabel>
-                    <Select
-                      {...register('category', {
-                        required: 'Please select a category',
-                      })}
-                      bg="white"
-                      borderColor="gray.200"
-                      _hover={{ borderColor: 'purple.400' }}
-                      _focus={{ borderColor: 'purple.500', boxShadow: '0 0 0 1px purple.500' }}
-                      h="12"
-                    >
-                      <option value="">Select a category</option>
+                  <FormControl isRequired>
+                    <FormLabel>Description</FormLabel>
+                    <Textarea
+                      {...register('description')}
+                      placeholder="Detailed description of your complaint"
+                      rows={4}
+                    />
+                  </FormControl>
+
+                  <FormControl isRequired>
+                    <FormLabel>Category</FormLabel>
+                    <Select {...register('category')} placeholder="Select category">
                       <option value="infrastructure">Infrastructure</option>
                       <option value="public_services">Public Services</option>
                       <option value="administration">Administration</option>
                       <option value="sanitation">Sanitation</option>
                       <option value="others">Others</option>
                     </Select>
-                    {errors.category && (
-                      <Text color="red.500" fontSize="sm" mt={1}>
-                        {errors.category.message}
-                      </Text>
-                    )}
                   </FormControl>
 
-                  <FormControl isInvalid={!!errors.location}>
-                    <FormLabel
-                      fontWeight="medium"
-                      color="gray.700"
-                    >
-                      Location
-                    </FormLabel>
+                  <FormControl isRequired>
+                    <FormLabel>Location</FormLabel>
                     <Input
-                      {...register('location', {
-                        required: 'Location is required',
-                      })}
-                      placeholder="Enter the location of the issue"
-                      bg="white"
-                      borderColor="gray.200"
-                      _hover={{ borderColor: 'purple.400' }}
-                      _focus={{ borderColor: 'purple.500', boxShadow: '0 0 0 1px purple.500' }}
-                      h="12"
+                      {...register('location')}
+                      placeholder="Location of the issue"
                     />
-                    {errors.location && (
-                      <Text color="red.500" fontSize="sm" mt={1}>
-                        {errors.location.message}
-                      </Text>
-                    )}
-                  </FormControl>
-
-                  <FormControl isInvalid={!!errors.description}>
-                    <FormLabel
-                      fontWeight="medium"
-                      color="gray.700"
-                    >
-                      Description
-                    </FormLabel>
-                    <Textarea
-                      {...register('description', {
-                        required: 'Description is required',
-                        minLength: {
-                          value: 20,
-                          message: 'Description must be at least 20 characters',
-                        },
-                      })}
-                      placeholder="Provide detailed information about your complaint"
-                      bg="white"
-                      borderColor="gray.200"
-                      _hover={{ borderColor: 'purple.400' }}
-                      _focus={{ borderColor: 'purple.500', boxShadow: '0 0 0 1px purple.500' }}
-                      rows={5}
-                    />
-                    {errors.description && (
-                      <Text color="red.500" fontSize="sm" mt={1}>
-                        {errors.description.message}
-                      </Text>
-                    )}
                   </FormControl>
 
                   <FormControl>
-                    <FormLabel
-                      fontWeight="medium"
-                      color="gray.700"
+                    <FormLabel>Upload Image (Optional)</FormLabel>
+                    <Input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageChange}
+                      display="none"
+                      id="image-upload"
+                    />
+                    <Button
+                      as="label"
+                      htmlFor="image-upload"
+                      colorScheme="blue"
+                      variant="outline"
+                      cursor="pointer"
                     >
-                      Upload Image (Optional)
-                    </FormLabel>
-                    <Box
-                      borderWidth={2}
-                      borderStyle="dashed"
-                      borderColor="gray.200"
-                      borderRadius="lg"
-                      p={4}
-                      transition="all 0.2s"
-                      _hover={{ borderColor: 'purple.400' }}
-                      position="relative"
-                    >
-                      <Input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleImageChange}
-                        height="100%"
-                        width="100%"
-                        position="absolute"
-                        top="0"
-                        left="0"
-                        opacity="0"
-                        aria-hidden="true"
-                        cursor="pointer"
-                      />
-                      <Text color="gray.500" textAlign="center">
-                        Click to upload or drag and drop
-                      </Text>
-                    </Box>
-                    {imagePreview && (
-                      <Box mt={4}>
+                      Choose Image
+                    </Button>
+                    {previewUrl && (
+                      <Box mt={4} position="relative">
                         <Image
-                          src={imagePreview}
-                          maxH="200px"
+                          src={previewUrl}
                           alt="Preview"
-                          borderRadius="lg"
-                          objectFit="cover"
+                          maxH="200px"
+                          objectFit="contain"
                         />
+                        <Button
+                          position="absolute"
+                          top={2}
+                          right={2}
+                          size="sm"
+                          colorScheme="red"
+                          onClick={removeImage}
+                        >
+                          Remove
+                        </Button>
                       </Box>
                     )}
                   </FormControl>
@@ -335,35 +277,49 @@ export default function NewComplaint() {
         </Container>
       </Box>
 
-      <Modal 
-        isOpen={isOpen} 
-        onClose={onClose}
+      {/* Analysis Modal */}
+      <Modal
+        isOpen={isOpen}
+        onClose={handleClose}
         closeOnOverlayClick={false}
-        closeOnEsc={false}
-        size="xl"
+        size="2xl"
+        isCentered
       >
         <ModalOverlay backdropFilter="blur(10px)" />
-        <ModalContent 
-          bg={useColorModeValue('white', 'gray.800')}
-          borderRadius="xl"
-          overflow="hidden"
-          boxShadow="xl"
-          my="16"
+        <ModalContent
+          bg={useColorModeValue('gray.50', 'gray.900')}
+          maxW="800px"
+          mx={4}
         >
-          <ModalCloseButton 
-            size="lg"
-            p="6"
-            color={useColorModeValue('gray.400', 'gray.600')}
-            _hover={{
-              color: useColorModeValue('gray.600', 'gray.400'),
-            }}
-          />
-          <ModalBody p={0}>
-            {submittedComplaintId && (
-              <AIAnalysisAnimation
-                complaintId={submittedComplaintId}
-                onComplete={handleAnimationComplete}
-              />
+          <ModalCloseButton />
+          <ModalBody p={6}>
+            {isAnalyzing ? (
+              <VStack py={10} spacing={4}>
+                <Spinner
+                  thickness="4px"
+                  speed="0.65s"
+                  emptyColor="gray.200"
+                  color="blue.500"
+                  size="xl"
+                />
+                <Text fontSize="lg" fontWeight="medium">
+                  Analyzing your complaint...
+                </Text>
+                <Text color="gray.500">
+                  Our AI is processing your complaint to provide detailed insights
+                </Text>
+              </VStack>
+            ) : complaintAnalysis ? (
+              <AIAnalysisDisplay analysis={complaintAnalysis} />
+            ) : (
+              <VStack py={10} spacing={4}>
+                <Text fontSize="lg" color="red.500">
+                  Could not retrieve analysis
+                </Text>
+                <Button onClick={handleClose}>
+                  View Complaint Status
+                </Button>
+              </VStack>
             )}
           </ModalBody>
         </ModalContent>

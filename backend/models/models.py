@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 from enum import Enum
 from bson import ObjectId
@@ -77,6 +77,24 @@ class ComplaintBase(BaseModel):
 class ComplaintCreate(ComplaintBase):
     citizen_id: str
 
+class AIAnalysis(BaseModel):
+    id: str = Field(alias="_id")
+    complaint_id: str
+    department_id: str
+    category_prediction: str
+    priority_score: float
+    analysis_text: str
+    officer_recommendation: str
+    version: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Config:
+        populate_by_name = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat(),
+            ObjectId: lambda v: str(v)
+        }
+
 class Complaint(ComplaintBase):
     id: str = Field(alias="_id")
     citizen_id: str
@@ -86,6 +104,14 @@ class Complaint(ComplaintBase):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_updated: datetime = Field(default_factory=datetime.utcnow)
     resolution_eta: Optional[datetime] = None
+    ai_analysis: Optional[Dict] = None
+
+    class Config:
+        populate_by_name = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat(),
+            ObjectId: lambda v: str(v)
+        }
 
 class DepartmentBase(BaseModel):
     name: str
@@ -103,17 +129,6 @@ class RedressalActionBase(BaseModel):
 
 class RedressalAction(RedressalActionBase):
     id: str = Field(alias="_id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-
-class AIAnalysis(BaseModel):
-    id: str = Field(alias="_id")
-    complaint_id: str
-    department_id: str
-    category_prediction: str
-    priority_score: float
-    analysis_text: str
-    officer_recommendation: str
-    ai_model_version: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Token(BaseModel):

@@ -1,12 +1,20 @@
 import os
+import logging
 from groq import Groq
 from typing import Dict, Tuple
 from datetime import datetime
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Initialize Groq client
-groq_client = Groq(
-    api_key=os.getenv("GROQ_API_KEY")
-)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    logger.error("GROQ_API_KEY is not set in environment variables")
+    raise ValueError("GROQ_API_KEY is required")
+
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 # Department name to ID mapping
 DEPARTMENT_MAPPING = {
@@ -40,7 +48,11 @@ async def analyze_complaint_text(complaint: Dict) -> Tuple[str, float, str, str]
     Returns:
         Tuple of (department_id, priority_score, category, analysis_text)
     """
-    prompt = f"""
+    try:
+        logger.info(f"Starting analysis for complaint: {complaint.get('_id', 'N/A')}")
+        logger.info(f"Complaint data: {complaint}")
+        
+        prompt = f"""
 Complaint Title: {complaint['title']}
 Description: {complaint['description']}
 Location: {complaint['location']}
@@ -60,43 +72,66 @@ Analysis: <your analysis>
 Officer Assignment: <your officer assignment recommendation>
 """
 
-    try:
-        # Call Groq API
-        completion = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",  # Using Llama 3.3 70B model which is currently supported
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.1,  # Low temperature for consistent results
-            max_tokens=500
-        )
-        
-        # Parse response
-        response = completion.choices[0].message.content
-        lines = response.strip().split('\n')
-        
-        department_name = lines[0].split(': ')[1].strip()
-        priority_score = float(lines[1].split(': ')[1]) / 10.0  # Convert 1-10 score to 0-1
-        category = lines[2].split(': ')[1].strip()
-        analysis = lines[3].split(': ')[1].strip()
-        officer_recommendation = lines[4].split(': ')[1].strip()
-        
-        # Map department name to ID
-        department_id = DEPARTMENT_MAPPING.get(department_name, "WORKS_001")  # Default to Public Works if unknown
-        
-        # Combine analysis and officer recommendation
-        full_analysis = f"{analysis}\n\nOfficer Assignment Recommendation: {officer_recommendation}"
-        
-        return department_id, priority_score, category, full_analysis
-        
+        try:
+            logger.info("Attempting to call Groq API...")
+            # Call Groq API with timeout
+            completion = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",  # Changed to a more reliable model
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=1000,  # Increased token limit
+                timeout=60  # Increased timeout
+            )
+            
+            # Get raw response
+            raw_response = completion.choices[0].message.content
+            logger.info(f"Raw Groq API response: {raw_response}")
+            
+            # Parse response
+            lines = raw_response.strip().split('\n')
+            if len(lines) < 5:
+                logger.error(f"Incomplete response from Groq API: {raw_response}")
+                raise ValueError(f"Incomplete response from Groq API: {raw_response}")
+            
+            # Extract department name and get ID
+            department_line = next((line for line in lines if line.startswith("Department:")), "")
+            department_name = department_line.split(": ")[1].strip() if department_line else "Public Works Department"
+            department_id = DEPARTMENT_MAPPING.get(department_name, "WORKS_001")
+            logger.info(f"Extracted department: {department_name} -> {department_id}")
+            
+            # Extract priority score
+            priority_line = next((line for line in lines if line.startswith("Priority:")), "")
+            try:
+                priority_score = float(priority_line.split(": ")[1].strip()) / 10.0 if priority_line else 0.5
+            except (ValueError, IndexError) as e:
+                logger.error(f"Error parsing priority score: {str(e)}")
+                priority_score = 0.5
+            logger.info(f"Extracted priority score: {priority_score}")
+            
+            # Extract category
+            category_line = next((line for line in lines if line.startswith("Category:")), "")
+            category = category_line.split(": ")[1].strip() if category_line else "others"
+            logger.info(f"Extracted category: {category}")
+            
+            # Return the raw response as analysis text
+            return department_id, priority_score, category, raw_response
+            
+        except Exception as api_error:
+            logger.error(f"Error calling Groq API: {str(api_error)}")
+            logger.error(f"API error details: {api_error.__dict__}")
+            raise
+            
     except Exception as e:
-        # Fallback values in case of API error
+        logger.error(f"Error in analyze_complaint_text: {str(e)}")
+        logger.error(f"Full error details: {e.__dict__}")
         return (
-            "WORKS_001",  # Default to Public Works department
-            0.5,  # Medium priority
-            "others",  # Default category
-            f"Error during AI analysis: {str(e)}"
+            "WORKS_001",
+            0.5,
+            "others",
+            f"Error during AI analysis: {str(e)}. Please try again or contact support if the issue persists."
         )
 
 async def analyze_complaint_image(image_url: str) -> Dict:
@@ -109,6 +144,7 @@ async def analyze_complaint_image(image_url: str) -> Dict:
     Returns:
         Dictionary containing image analysis results
     """
+    logger.info(f"Image analysis requested for URL: {image_url}")
     # TODO: Implement image analysis using BLIP model
     return {
         "objects_detected": [],

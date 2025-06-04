@@ -14,11 +14,13 @@ import {
   Stack,
   Container,
   Text,
+  Image,
 } from '@chakra-ui/react'
 import { HamburgerIcon, CloseIcon } from '@chakra-ui/icons'
 import { useRouter } from 'next/router'
 import { useAuth } from '../contexts/AuthContext'
 import Link from 'next/link'
+import skmgovLogo from '../assets/skmgov.png'
 
 interface NavItem {
   label: string
@@ -84,7 +86,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <HStack spacing={8} alignItems="center">
             <Box cursor="pointer" fontWeight="bold" fontSize="xl">
               <Link href="/">
-                <Text color="brand.500">CMS</Text>
+                <HStack spacing={2}>
+                  <Image src={skmgovLogo.src} alt="SKM Government Logo" height="40px" />
+                  <Text color="brand.500" fontSize="md">AI Automated Complaint Redressal and Recognition System</Text>
+                </HStack>
               </Link>
             </Box>
             <HStack as="nav" spacing={4} display={{ base: 'none', md: 'flex' }}>
