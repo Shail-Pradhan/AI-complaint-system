@@ -45,7 +45,7 @@ class User(UserBase):
             datetime: lambda v: v.isoformat(),
             ObjectId: lambda v: str(v)
         }
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "email": "user@example.com",
                 "name": "John Doe",
@@ -113,7 +113,7 @@ class AIAnalysis(BaseModel):
     priority_score: float
     analysis_text: str
     officer_recommendation: str
-    model_version: str
+    ai_model_version: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Token(BaseModel):
