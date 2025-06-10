@@ -9,13 +9,6 @@ class UserRole(str, Enum):
     OFFICER = "officer"
     ADMIN = "admin"
 
-class ComplaintCategory(str, Enum):
-    INFRASTRUCTURE = "infrastructure"
-    PUBLIC_SERVICES = "public_services"
-    ADMINISTRATION = "administration"
-    SANITATION = "sanitation"
-    OTHERS = "others"
-
 class ComplaintStatus(str, Enum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
@@ -70,7 +63,7 @@ class UserInDB(User):
 class ComplaintBase(BaseModel):
     title: str
     description: str
-    category: ComplaintCategory
+    district: str
     location: str
     image_url: Optional[str] = None
 
@@ -81,7 +74,6 @@ class AIAnalysis(BaseModel):
     id: str = Field(alias="_id")
     complaint_id: str
     department_id: str
-    category_prediction: str
     priority_score: float
     analysis_text: str
     officer_recommendation: str

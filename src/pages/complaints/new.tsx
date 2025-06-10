@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import {
   Box,
   Button,
@@ -15,13 +15,10 @@ import {
   Image,
   VStack,
   useColorModeValue,
-  Modal,
-  ModalOverlay,
-  ModalContent,
-  ModalBody,
-  ModalCloseButton,
-  useDisclosure,
   Spinner,
+  Center,
+  Collapse,
+  Flex,
 } from '@chakra-ui/react'
 import { useForm } from 'react-hook-form'
 import { useAuth } from '../../contexts/AuthContext'
@@ -29,11 +26,14 @@ import Layout from '../../components/Layout'
 import { useRouter } from 'next/router'
 import axios from 'axios'
 import AIAnalysisDisplay from '../../components/AIAnalysisDisplay'
+import TypingAnimation from '../../components/TypingAnimation'
+import { FaList } from 'react-icons/fa'
+import { Icon } from '@chakra-ui/react'
 
 interface ComplaintForm {
   title: string
   description: string
-  category: 'infrastructure' | 'public_services' | 'administration' | 'sanitation' | 'others'
+  district: 'Gangtok' | 'Mangan' | 'Pakyong' | 'Namchi' | 'Gyalshing' | 'Soreng'
   location: string
 }
 
@@ -43,11 +43,20 @@ export default function NewComplaint() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [complaintAnalysis, setComplaintAnalysis] = useState<any>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const { isOpen, onOpen, onClose } = useDisclosure()
+  const [showTypingAnimation, setShowTypingAnimation] = useState(false)
+  const [showFinalAnalysis, setShowFinalAnalysis] = useState(false)
+  const [isSubmitted, setIsSubmitted] = useState(false)
+  const analysisRef = useRef<HTMLDivElement>(null)
   const { register, handleSubmit, formState: { errors } } = useForm<ComplaintForm>()
   const { user } = useAuth()
   const router = useRouter()
   const toast = useToast()
+
+  useEffect(() => {
+    if (isSubmitted && analysisRef.current) {
+      analysisRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [isSubmitted, isAnalyzing, showTypingAnimation])
 
   const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -64,7 +73,7 @@ export default function NewComplaint() {
 
   const pollForAnalysis = async (complaintId: string) => {
     const maxAttempts = 10
-    const delayMs = 2000 // 2 seconds between attempts
+    const delayMs = 2000
     
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       console.log(`Polling attempt ${attempt + 1} for analysis...`)
@@ -84,23 +93,19 @@ export default function NewComplaint() {
   const onSubmit = async (data: ComplaintForm) => {
     try {
       setIsLoading(true)
+      setIsSubmitted(true)
       const complaintData = {
         ...data,
         citizen_id: user?.email || 'anonymous'
       }
 
-      console.log('Submitting complaint data:', complaintData)
       const complaintResponse = await axios.post('/api/complaints', complaintData)
-      console.log('Complaint creation response:', complaintResponse.data)
-      
       const complaintId = complaintResponse.data._id
 
-      // Handle image upload if present
       if (selectedImage) {
-        console.log('Uploading image for complaint:', complaintId)
         const formData = new FormData()
         formData.append('file', selectedImage)
-        const imageResponse = await axios.post(
+        await axios.post(
           `/api/complaints/${complaintId}/image`,
           formData,
           {
@@ -109,16 +114,14 @@ export default function NewComplaint() {
             },
           }
         )
-        console.log('Image upload response:', imageResponse.data)
       }
 
-      // Show analysis modal and start polling
-      onOpen()
       setIsAnalyzing(true)
       
       try {
         const analysis = await pollForAnalysis(complaintId)
         setComplaintAnalysis(analysis)
+        setShowTypingAnimation(true)
       } catch (error) {
         console.error('Error getting analysis:', error)
         toast({
@@ -133,10 +136,7 @@ export default function NewComplaint() {
       }
 
     } catch (error: any) {
-      console.error('Full error object:', error)
-      console.error('Error response data:', error.response?.data)
-      console.error('Error stack:', error.stack)
-      
+      console.error('Error submitting complaint:', error)
       toast({
         title: 'Error submitting complaint',
         description: error.response?.data?.detail || error.message || 'Please try again later.',
@@ -144,14 +144,36 @@ export default function NewComplaint() {
         duration: 5000,
         isClosable: true,
       })
+      setIsSubmitted(false)
     } finally {
       setIsLoading(false)
     }
   }
 
-  const handleClose = () => {
-    onClose()
+  const handleTypingComplete = () => {
+    setShowTypingAnimation(false)
+    setShowFinalAnalysis(true)
+  }
+
+  const handleViewComplaints = () => {
     router.push('/complaints')
+  }
+
+  const formatAnalysisText = (analysis: any) => {
+    const sections = analysis.analysis_text.split('\n')
+    const formattedSections = sections.map(section => {
+      if (section.startsWith('Department:')) {
+        return `**${section}**`
+      }
+      if (section.startsWith('Analysis:')) {
+        return `**Analysis:**\n${section.replace('Analysis:', '')}`
+      }
+      if (section.startsWith('Officer:')) {
+        return `**Officer Recommendation:**\n${section.replace('Officer:', '')}`
+      }
+      return section
+    })
+    return formattedSections.join('\n\n')
   }
 
   return (
@@ -163,167 +185,157 @@ export default function NewComplaint() {
         pb={8}
       >
         <Container maxW="container.md">
-          <Box
-            bg={useColorModeValue('white', 'gray.800')}
-            p={8}
-            rounded="xl"
-            shadow="base"
-          >
-            <VStack spacing={8} align="stretch">
-              <Heading size="lg" mb={6}>
-                Submit a New Complaint
-              </Heading>
+          <Stack spacing={6}>
+            <Box
+              bg={useColorModeValue('white', 'gray.800')}
+              p={8}
+              rounded="xl"
+              shadow="base"
+            >
+              <VStack spacing={8} align="stretch">
+                <Heading size="lg">Submit a New Complaint</Heading>
 
-              <form onSubmit={handleSubmit(onSubmit)}>
-                <Stack spacing={6}>
-                  <FormControl isRequired>
-                    <FormLabel>Title</FormLabel>
-                    <Input
-                      {...register('title')}
-                      placeholder="Brief title of your complaint"
-                    />
-                  </FormControl>
+                <form onSubmit={handleSubmit(onSubmit)}>
+                  <Stack spacing={6}>
+                    <FormControl isRequired>
+                      <FormLabel>Title</FormLabel>
+                      <Input
+                        {...register('title')}
+                        placeholder="Brief title of your complaint"
+                      />
+                    </FormControl>
 
-                  <FormControl isRequired>
-                    <FormLabel>Description</FormLabel>
-                    <Textarea
-                      {...register('description')}
-                      placeholder="Detailed description of your complaint"
-                      rows={4}
-                    />
-                  </FormControl>
+                    <FormControl isRequired>
+                      <FormLabel>Description</FormLabel>
+                      <Textarea
+                        {...register('description')}
+                        placeholder="Detailed description of your complaint"
+                        rows={4}
+                      />
+                    </FormControl>
 
-                  <FormControl isRequired>
-                    <FormLabel>Category</FormLabel>
-                    <Select {...register('category')} placeholder="Select category">
-                      <option value="infrastructure">Infrastructure</option>
-                      <option value="public_services">Public Services</option>
-                      <option value="administration">Administration</option>
-                      <option value="sanitation">Sanitation</option>
-                      <option value="others">Others</option>
-                    </Select>
-                  </FormControl>
+                    <FormControl isRequired>
+                      <FormLabel>District</FormLabel>
+                      <Select {...register('district')} placeholder="Select district">
+                        <option value="Gangtok">Gangtok</option>
+                        <option value="Mangan">Mangan</option>
+                        <option value="Pakyong">Pakyong</option>
+                        <option value="Namchi">Namchi</option>
+                        <option value="Gyalshing">Gyalshing</option>
+                        <option value="Soreng">Soreng</option>
+                      </Select>
+                    </FormControl>
 
-                  <FormControl isRequired>
-                    <FormLabel>Location</FormLabel>
-                    <Input
-                      {...register('location')}
-                      placeholder="Location of the issue"
-                    />
-                  </FormControl>
+                    <FormControl isRequired>
+                      <FormLabel>Location</FormLabel>
+                      <Input
+                        {...register('location')}
+                        placeholder="Location of the issue"
+                      />
+                    </FormControl>
 
-                  <FormControl>
-                    <FormLabel>Upload Image (Optional)</FormLabel>
-                    <Input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleImageChange}
-                      display="none"
-                      id="image-upload"
-                    />
+                    <FormControl>
+                      <FormLabel>Upload Image (Optional)</FormLabel>
+                      <Input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleImageChange}
+                        display="none"
+                        id="image-upload"
+                      />
+                      <Button
+                        as="label"
+                        htmlFor="image-upload"
+                        colorScheme="blue"
+                        variant="outline"
+                        cursor="pointer"
+                      >
+                        Choose Image
+                      </Button>
+                      {previewUrl && (
+                        <Box mt={4} position="relative">
+                          <Image
+                            src={previewUrl}
+                            alt="Preview"
+                            maxH="200px"
+                            objectFit="contain"
+                          />
+                          <Button
+                            position="absolute"
+                            top={2}
+                            right={2}
+                            size="sm"
+                            colorScheme="red"
+                            onClick={removeImage}
+                          >
+                            Remove
+                          </Button>
+                        </Box>
+                      )}
+                    </FormControl>
+
                     <Button
-                      as="label"
-                      htmlFor="image-upload"
+                      type="submit"
                       colorScheme="blue"
-                      variant="outline"
-                      cursor="pointer"
+                      size="lg"
+                      isLoading={isLoading}
+                      loadingText="Submitting..."
+                      isDisabled={isSubmitted}
                     >
-                      Choose Image
+                      Submit Complaint
                     </Button>
-                    {previewUrl && (
-                      <Box mt={4} position="relative">
-                        <Image
-                          src={previewUrl}
-                          alt="Preview"
-                          maxH="200px"
-                          objectFit="contain"
-                        />
-                        <Button
-                          position="absolute"
-                          top={2}
-                          right={2}
-                          size="sm"
-                          colorScheme="red"
-                          onClick={removeImage}
-                        >
-                          Remove
-                        </Button>
-                      </Box>
-                    )}
-                  </FormControl>
+                  </Stack>
+                </form>
+              </VStack>
+            </Box>
 
-                  <Button
-                    type="submit"
-                    bgGradient="linear(to-r, blue.400, purple.500)"
-                    color="white"
-                    size="lg"
-                    height="14"
-                    fontSize="md"
-                    fontWeight="medium"
-                    _hover={{
-                      bgGradient: 'linear(to-r, blue.500, purple.600)',
-                    }}
-                    _active={{
-                      bgGradient: 'linear(to-r, blue.600, purple.700)',
-                    }}
-                    isLoading={isLoading}
-                  >
-                    Submit Complaint
-                  </Button>
-                </Stack>
-              </form>
-            </VStack>
-          </Box>
+            <Box ref={analysisRef}>
+              <Collapse in={isSubmitted} animateOpacity>
+                <Box
+                  bg={useColorModeValue('white', 'gray.800')}
+                  p={8}
+                  rounded="xl"
+                  shadow="base"
+                >
+                  {isAnalyzing ? (
+                    <Center py={8}>
+                      <VStack spacing={4}>
+                        <Spinner size="xl" color="blue.500" thickness="3px" />
+                        <Text fontSize="lg" color="gray.600">
+                          Analyzing your complaint...
+                        </Text>
+                        <Text color="gray.500" fontSize="sm">
+                          This may take a few moments
+                        </Text>
+                      </VStack>
+                    </Center>
+                  ) : showTypingAnimation ? (
+                    <TypingAnimation
+                      text={formatAnalysisText(complaintAnalysis)}
+                      onComplete={handleTypingComplete}
+                      speed={40}
+                    />
+                  ) : showFinalAnalysis ? (
+                    <VStack spacing={6} align="stretch">
+                      <AIAnalysisDisplay analysis={complaintAnalysis} />
+                      <Flex justify="center" pt={4}>
+                        <Button
+                          colorScheme="blue"
+                          size="lg"
+                          onClick={handleViewComplaints}
+                          leftIcon={<Icon as={FaList} />}
+                        >
+                          View All Complaints
+                        </Button>
+                      </Flex>
+                    </VStack>
+                  ) : null}
+                </Box>
+              </Collapse>
+            </Box>
+          </Stack>
         </Container>
       </Box>
-
-      {/* Analysis Modal */}
-      <Modal
-        isOpen={isOpen}
-        onClose={handleClose}
-        closeOnOverlayClick={false}
-        size="2xl"
-        isCentered
-      >
-        <ModalOverlay backdropFilter="blur(10px)" />
-        <ModalContent
-          bg={useColorModeValue('gray.50', 'gray.900')}
-          maxW="800px"
-          mx={4}
-        >
-          <ModalCloseButton />
-          <ModalBody p={6}>
-            {isAnalyzing ? (
-              <VStack py={10} spacing={4}>
-                <Spinner
-                  thickness="4px"
-                  speed="0.65s"
-                  emptyColor="gray.200"
-                  color="blue.500"
-                  size="xl"
-                />
-                <Text fontSize="lg" fontWeight="medium">
-                  Analyzing your complaint...
-                </Text>
-                <Text color="gray.500">
-                  Our AI is processing your complaint to provide detailed insights
-                </Text>
-              </VStack>
-            ) : complaintAnalysis ? (
-              <AIAnalysisDisplay analysis={complaintAnalysis} />
-            ) : (
-              <VStack py={10} spacing={4}>
-                <Text fontSize="lg" color="red.500">
-                  Could not retrieve analysis
-                </Text>
-                <Button onClick={handleClose}>
-                  View Complaint Status
-                </Button>
-              </VStack>
-            )}
-          </ModalBody>
-        </ModalContent>
-      </Modal>
     </Layout>
   )
 } 

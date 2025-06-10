@@ -31,23 +31,27 @@ async def analyze_complaint(request: Request, complaint: dict) -> dict:
     try:
         # Perform text analysis
         logger.info("Calling analyze_complaint_text...")
-        department_id, priority_score, category, analysis_text = await analyze_complaint_text(complaint)
-        logger.info(f"Text analysis results: department={department_id}, priority={priority_score}, category={category}")
+        department_id, priority_score, analysis_text = await analyze_complaint_text(complaint)
+        logger.info(f"Text analysis results: department={department_id}, priority={priority_score}")
         
-        # Split analysis text to separate analysis and officer recommendation
-        parts = analysis_text.split("\n\nOfficer Assignment: ")
-        analysis = parts[0]
-        officer_recommendation = parts[1] if len(parts) > 1 else "No specific officer recommendation provided."
-        logger.info("Successfully split analysis and recommendation")
+        # Extract officer recommendation from analysis text
+        lines = analysis_text.strip().split('\n')
+        officer_line = next((line for line in lines if line.startswith("Officer:")), "")
+        officer_recommendation = officer_line.split("Officer:")[1].strip() if officer_line else "No specific officer recommendation provided."
+        
+        # Extract analysis from analysis text
+        analysis_line = next((line for line in lines if line.startswith("Analysis:")), "")
+        analysis = analysis_line.split("Analysis:")[1].strip() if analysis_line else analysis_text
+        
+        logger.info("Successfully extracted analysis and recommendation")
         
         # Create analysis record
         analysis_record = {
             "_id": str(ObjectId()),
             "complaint_id": complaint["_id"],
             "department_id": department_id,
-            "category_prediction": category,
             "priority_score": priority_score,
-            "analysis_text": analysis,
+            "analysis_text": analysis_text,
             "officer_recommendation": officer_recommendation,
             "version": "llama-3.3-70b-versatile",
             "created_at": datetime.utcnow()
@@ -81,10 +85,8 @@ async def create_complaint(
         complaint_dict["created_at"] = datetime.utcnow()
         complaint_dict["last_updated"] = complaint_dict["created_at"]
         complaint_dict["status"] = ComplaintStatus.PENDING
-        
         # Log the complaint data for debugging
         logger.info(f"Creating complaint with data: {complaint_dict}")
-        
         # Insert complaint first
         await request.app.mongodb["complaints"].insert_one(complaint_dict)
         
@@ -220,6 +222,9 @@ async def get_complaints(
                 query["department_id"] = officer["department_id"]
         
         complaints = await request.app.mongodb["complaints"].find(query).to_list(1000)
+        for c in complaints:
+            if 'district' not in c or not c['district']:
+                c['district'] = c.get('location', 'Unknown')
         return complaints
     except Exception as e:
         logger.error(f"Error fetching complaints: {str(e)}")

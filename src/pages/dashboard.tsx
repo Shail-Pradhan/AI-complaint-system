@@ -20,6 +20,14 @@ import {
   Text,
   Skeleton,
   useColorModeValue,
+  Modal,
+  ModalOverlay,
+  ModalContent,
+  ModalHeader,
+  ModalFooter,
+  ModalBody,
+  ModalCloseButton,
+  useDisclosure,
 } from '@chakra-ui/react'
 import { useRouter } from 'next/router'
 import { useAuth } from '../contexts/AuthContext'
@@ -27,6 +35,7 @@ import Layout from '../components/Layout'
 import Link from 'next/link'
 import axios from 'axios'
 import { format } from 'date-fns'
+import AIAnalysisDisplay from '../components/AIAnalysisDisplay'
 
 interface DashboardStats {
   total_complaints: number
@@ -36,15 +45,37 @@ interface DashboardStats {
     _id: string
     title: string
     status: string
-    category: string
+    district: string
+    location: string
+    description: string
     created_at: string
+    ai_analysis?: {
+      priority_score: number
+      analysis_text: string
+      officer_recommendation: string
+      image_analysis?: {
+        objects_detected: string[]
+        scene_description: string
+        severity_score: number
+      }
+    }
   }>
+}
+
+// Helper function to extract department from AI analysis
+const extractDepartment = (analysisText?: string): string => {
+  return analysisText?.split('\n')
+    .find(line => line.startsWith('Department:'))
+    ?.split(':')[1]
+    ?.trim() || 'Pending Analysis'
 }
 
 export default function Dashboard() {
   const { user, loading, isAuthenticated } = useAuth()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [isLoadingStats, setIsLoadingStats] = useState(true)
+  const [selectedComplaint, setSelectedComplaint] = useState<DashboardStats['recent_complaints'][0] | null>(null)
+  const { isOpen, onOpen, onClose } = useDisclosure()
   const router = useRouter()
   const toast = useToast()
 
@@ -102,6 +133,11 @@ export default function Dashboard() {
     }
   }
 
+  const handleViewAnalysis = (complaint: DashboardStats['recent_complaints'][0]) => {
+    setSelectedComplaint(complaint)
+    onOpen()
+  }
+
   if (loading || !user) {
     return null
   }
@@ -112,7 +148,7 @@ export default function Dashboard() {
         <Box mb={8}>
           <Heading size="lg">Welcome, {user.name}!</Heading>
           <Text color="gray.600" mt={2}>
-            Here's an overview of your complaints
+            Here's an overview of complaints submitted by citizens.
           </Text>
         </Box>
 
@@ -177,19 +213,27 @@ export default function Dashboard() {
             borderColor={borderColor}
             overflow="hidden"
           >
-            <Table variant="simple">
+            <Table variant="simple" size="sm">
               <Thead>
                 <Tr>
-                  <Th>Title</Th>
-                  <Th>Category</Th>
-                  <Th>Status</Th>
-                  <Th>Submitted On</Th>
+                  <Th width="15%">Title</Th>
+                  <Th width="10%">District</Th>
+                  <Th width="15%">Location</Th>
+                  <Th width="15%">Recommended Department</Th>
+                  <Th width="10%">Priority</Th>
+                  <Th width="10%">Status</Th>
+                  <Th width="15%">Submitted On</Th>
+                  <Th width="10%">Actions</Th>
                 </Tr>
               </Thead>
               <Tbody>
                 {isLoadingStats ? (
                   [...Array(3)].map((_, index) => (
                     <Tr key={index}>
+                      <Td><Skeleton height="20px" /></Td>
+                      <Td><Skeleton height="20px" /></Td>
+                      <Td><Skeleton height="20px" /></Td>
+                      <Td><Skeleton height="20px" /></Td>
                       <Td><Skeleton height="20px" /></Td>
                       <Td><Skeleton height="20px" /></Td>
                       <Td><Skeleton height="20px" /></Td>
@@ -202,8 +246,33 @@ export default function Dashboard() {
                       <Td>{complaint.title}</Td>
                       <Td>
                         <Badge colorScheme="purple">
-                          {complaint.category.replace('_', ' ')}
+                          {complaint.district || "Unknown"}
                         </Badge>
+                      </Td>
+                      <Td>{complaint.location}</Td>
+                      <Td>
+                        <Badge colorScheme="blue" fontSize="sm">
+                          {complaint.ai_analysis 
+                            ? extractDepartment(complaint.ai_analysis.analysis_text)
+                            : 'Pending Analysis'}
+                        </Badge>
+                      </Td>
+                      <Td>
+                        {complaint.ai_analysis ? (
+                          <Badge
+                            colorScheme={
+                              complaint.ai_analysis.priority_score >= 0.7
+                                ? 'red'
+                                : complaint.ai_analysis.priority_score >= 0.4
+                                ? 'yellow'
+                                : 'green'
+                            }
+                          >
+                            {Math.round(complaint.ai_analysis.priority_score * 10)}/10
+                          </Badge>
+                        ) : (
+                          <Badge colorScheme="gray">Pending</Badge>
+                        )}
                       </Td>
                       <Td>
                         <Badge colorScheme={getStatusColor(complaint.status)}>
@@ -211,11 +280,21 @@ export default function Dashboard() {
                         </Badge>
                       </Td>
                       <Td>{format(new Date(complaint.created_at), 'MMM d, yyyy')}</Td>
+                      <Td>
+                        <Button
+                          size="sm"
+                          colorScheme="blue"
+                          onClick={() => handleViewAnalysis(complaint)}
+                          isDisabled={!complaint.ai_analysis}
+                        >
+                          View AI Analysis
+                        </Button>
+                      </Td>
                     </Tr>
                   ))
                 ) : (
                   <Tr>
-                    <Td colSpan={4} textAlign="center" py={4}>
+                    <Td colSpan={8} textAlign="center" py={4}>
                       <Text color="gray.500">No complaints submitted yet</Text>
                     </Td>
                   </Tr>
@@ -224,6 +303,22 @@ export default function Dashboard() {
             </Table>
           </Box>
         </Box>
+
+        {/* AI Analysis Modal */}
+        <Modal isOpen={isOpen} onClose={onClose} size="xl">
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>AI Analysis for {selectedComplaint?.title}</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody>
+              {selectedComplaint?.ai_analysis ? (
+                <AIAnalysisDisplay analysis={selectedComplaint.ai_analysis} />
+              ) : (
+                <Text>No AI analysis available for this complaint.</Text>
+              )}
+            </ModalBody>
+          </ModalContent>
+        </Modal>
       </Container>
     </Layout>
   )

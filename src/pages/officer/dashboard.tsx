@@ -109,7 +109,7 @@ export default function OfficerDashboard() {
     try {
       // Fetch complaints assigned to the officer
       const complaintsResponse = await axios.get('/api/complaints', {
-        params: { assigned_to: user?.id },
+        params: { assigned_to: user?._id },
       })
       setComplaints(complaintsResponse.data)
 

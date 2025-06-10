@@ -33,7 +33,7 @@ import { format } from 'date-fns'
 interface Complaint {
   _id: string
   title: string
-  category: string
+  district: string
   status: string
   location: string
   created_at: string
@@ -50,11 +50,19 @@ interface Complaint {
   }
 }
 
+// Helper function to extract department from AI analysis
+const extractDepartment = (analysisText: string): string => {
+  return analysisText?.split('\n')
+    .find(line => line.startsWith('Department:'))
+    ?.split(':')[1]
+    ?.trim() || 'Pending Analysis'
+}
+
 export default function Complaints() {
   const [complaints, setComplaints] = useState<Complaint[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('')
-  const [categoryFilter, setCategoryFilter] = useState('')
+  const [prioritySort, setPrioritySort] = useState('')
   const { user } = useAuth()
   const { isOpen, onOpen, onClose } = useDisclosure()
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null)
@@ -64,18 +72,28 @@ export default function Complaints() {
 
   useEffect(() => {
     fetchComplaints()
-  }, [statusFilter, categoryFilter])
+  }, [statusFilter, prioritySort])
 
   const fetchComplaints = async () => {
     try {
       let url = '/api/complaints'
       const params = new URLSearchParams()
       if (statusFilter) params.append('status', statusFilter)
-      if (categoryFilter) params.append('category', categoryFilter)
+      if (prioritySort) params.append('priority_sort', prioritySort)
       if (params.toString()) url += `?${params.toString()}`
 
       const response = await axios.get(url)
-      setComplaints(response.data)
+      let sortedComplaints = [...response.data]
+      
+      if (prioritySort && sortedComplaints.length > 0) {
+        sortedComplaints.sort((a, b) => {
+          const scoreA = a.ai_analysis?.priority_score || 0
+          const scoreB = b.ai_analysis?.priority_score || 0
+          return prioritySort === 'desc' ? scoreB - scoreA : scoreA - scoreB
+        })
+      }
+      
+      setComplaints(sortedComplaints)
     } catch (error) {
       console.error('Error fetching complaints:', error)
     } finally {
@@ -126,16 +144,13 @@ export default function Complaints() {
               </Select>
 
               <Select
-                placeholder="Filter by Category"
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
+                placeholder="Sort by Priority"
+                value={prioritySort}
+                onChange={(e) => setPrioritySort(e.target.value)}
                 maxW="200px"
               >
-                <option value="infrastructure">Infrastructure</option>
-                <option value="public_services">Public Services</option>
-                <option value="administration">Administration</option>
-                <option value="sanitation">Sanitation</option>
-                <option value="others">Others</option>
+                <option value="desc">High to Low Priority</option>
+                <option value="asc">Low to High Priority</option>
               </Select>
             </HStack>
           </Box>
@@ -147,15 +162,17 @@ export default function Complaints() {
             borderColor={borderColor}
             overflow="hidden"
           >
-            <Table variant="simple">
+            <Table variant="simple" size="sm">
               <Thead>
                 <Tr>
-                  <Th>Title</Th>
-                  <Th>Category</Th>
-                  <Th>Location</Th>
-                  <Th>Status</Th>
-                  <Th>Date</Th>
-                  <Th>Actions</Th>
+                  <Th width="15%">Title</Th>
+                  <Th width="10%">District</Th>
+                  <Th width="15%">Location</Th>
+                  <Th width="15%">Recommended Department</Th>
+                  <Th width="10%">Priority</Th>
+                  <Th width="10%">Status</Th>
+                  <Th width="15%">Date</Th>
+                  <Th width="10%">Actions</Th>
                 </Tr>
               </Thead>
               <Tbody>
@@ -164,10 +181,34 @@ export default function Complaints() {
                     <Td>{complaint.title}</Td>
                     <Td>
                       <Badge colorScheme="purple">
-                        {complaint.category.replace('_', ' ')}
+                        {complaint.district || "Unknown"}
                       </Badge>
                     </Td>
                     <Td>{complaint.location}</Td>
+                    <Td>
+                      <Badge colorScheme="blue" fontSize="sm">
+                        {complaint.ai_analysis 
+                          ? extractDepartment(complaint.ai_analysis.analysis_text)
+                          : 'Pending Analysis'}
+                      </Badge>
+                    </Td>
+                    <Td>
+                      {complaint.ai_analysis ? (
+                        <Badge
+                          colorScheme={
+                            complaint.ai_analysis.priority_score >= 0.7
+                              ? 'red'
+                              : complaint.ai_analysis.priority_score >= 0.4
+                              ? 'yellow'
+                              : 'green'
+                          }
+                        >
+                          {Math.round(complaint.ai_analysis.priority_score * 10)}/10
+                        </Badge>
+                      ) : (
+                        <Badge colorScheme="gray">Pending</Badge>
+                      )}
+                    </Td>
                     <Td>
                       <Badge colorScheme={getStatusColor(complaint.status)}>
                         {complaint.status.replace('_', ' ')}
@@ -182,7 +223,7 @@ export default function Complaints() {
                         colorScheme="blue"
                         onClick={() => handleComplaintClick(complaint)}
                       >
-                        View Details
+                        View AI Analysis
                       </Button>
                     </Td>
                   </Tr>
@@ -195,38 +236,14 @@ export default function Complaints() {
         <Modal isOpen={isOpen} onClose={onClose} size="xl">
           <ModalOverlay />
           <ModalContent>
-            <ModalHeader>Complaint Details</ModalHeader>
+            <ModalHeader>AI Analysis</ModalHeader>
             <ModalCloseButton />
             <ModalBody pb={6}>
               {selectedComplaint && (
                 <Stack spacing={4}>
                   <Box>
-                    <Text fontWeight="bold">Title</Text>
-                    <Text>{selectedComplaint.title}</Text>
-                  </Box>
-
-                  <Box>
                     <Text fontWeight="bold">Description</Text>
                     <Text>{selectedComplaint.description}</Text>
-                  </Box>
-
-                  <Box>
-                    <Text fontWeight="bold">Category</Text>
-                    <Badge colorScheme="purple">
-                      {selectedComplaint.category.replace('_', ' ')}
-                    </Badge>
-                  </Box>
-
-                  <Box>
-                    <Text fontWeight="bold">Status</Text>
-                    <Badge colorScheme={getStatusColor(selectedComplaint.status)}>
-                      {selectedComplaint.status.replace('_', ' ')}
-                    </Badge>
-                  </Box>
-
-                  <Box>
-                    <Text fontWeight="bold">Location</Text>
-                    <Text>{selectedComplaint.location}</Text>
                   </Box>
 
                   {selectedComplaint.ai_analysis && (
@@ -237,7 +254,15 @@ export default function Complaints() {
                         </Text>
                         
                         <Box bg="gray.50" p={4} borderRadius="md">
-                          <Stack spacing={3}>
+                          <Stack spacing={4}>
+                            <Box>
+                              <Text fontWeight="semibold">Department</Text>
+                              <Badge colorScheme="blue" fontSize="sm">
+                                {selectedComplaint.ai_analysis.analysis_text.split('\n').find(line => 
+                                  line.startsWith('Department:'))?.split(':')[1]?.trim() || 'Not specified'}
+                              </Badge>
+                            </Box>
+
                             <Box>
                               <Text fontWeight="semibold">Priority Score</Text>
                               <Badge
@@ -249,13 +274,24 @@ export default function Complaints() {
                                     : 'green'
                                 }
                               >
-                                {Math.round(selectedComplaint.ai_analysis.priority_score * 100)}%
+                                {Math.round(selectedComplaint.ai_analysis.priority_score * 10)}/10
                               </Badge>
                             </Box>
 
                             <Box>
                               <Text fontWeight="semibold">Analysis</Text>
-                              <Text>{selectedComplaint.ai_analysis.analysis_text}</Text>
+                              <Text>
+                                {selectedComplaint.ai_analysis.analysis_text.split('\n').find(line => 
+                                  line.startsWith('Analysis:'))?.split(':')[1]?.trim() || 'No analysis available'}
+                              </Text>
+                            </Box>
+
+                            <Box>
+                              <Text fontWeight="semibold">Officer Recommendation</Text>
+                              <Text>
+                                {selectedComplaint.ai_analysis.analysis_text.split('\n').find(line => 
+                                  line.startsWith('Officer:'))?.split(':')[1]?.trim() || 'No recommendation available'}
+                              </Text>
                             </Box>
 
                             {selectedComplaint.ai_analysis.image_analysis && (

@@ -40,7 +40,7 @@ const NAV_ITEMS: NavItem[] = [
     roles: ['citizen'],
   },
   {
-    label: 'My Complaints',
+    label: 'Complaints',
     href: '/complaints',
     roles: ['citizen'],
   },
